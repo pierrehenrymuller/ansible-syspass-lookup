@@ -1,0 +1,5 @@
+---  # -*- mode: yaml; coding: utf-8 -*-
+
+#DEMO
+syspass_API_URL: 'http://demo-beta.syspass.org:10080/api.php'
+syspass_API_KEY: '8ea30e82647c13a5f98e3c5faab6e2b3dfe7b8d1e9cdadb651ffc391350cc5f7'

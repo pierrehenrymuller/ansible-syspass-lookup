@@ -1,0 +1,8 @@
+---  # -*- mode: yaml; coding: utf-8 -*-
+
+#DEMO
+#syspass_API_URL: 'http://demo-beta.syspass.org:10080/api.php'
+#syspass_API_KEY: '8ea30e82647c13a5f98e3c5faab6e2b3dfe7b8d1e9cdadb651ffc391350cc5f7'
+#REAL
+syspass_API_URL: 'https://syspass-prod.siege.digdeo.net/api.php'
+syspass_API_KEY: '64ec589cc56c0d04f3c8b10335ee6f466f5a9e5b2ff7f11b7f39b4223692d2bd'

@@ -1,0 +1,21 @@
+---  # -*- mode: yaml; coding: utf-8 -*-
+  
+- name: SysPass API | GET
+  vars:
+    sysargs: >-
+      psswd_length={{ psswd_length | default(16) }}
+      psswd_tokenPass={{ psswd_tokenPass | default('ERR_NEEDED') }}
+      chars={{ chars | default('default') }}
+      account_tokenPass={{ account_tokenPass | default('ERR_NEEDED') }}
+      acc_name={{ acc_name | default('ERR_NEEDED') }}
+      login={{ login | default('ERR_NEEDED') }}
+      category={{ category | default('ERR_NEEDED') }}
+      customer={{ customer | default('ERR_NEEDED') }}
+      url={{ url | default('') }}
+      notes={{ notes | default('') }}
+    
+  debug:
+    msg: "{{lookup('syspass',sysargs)}}"
+  changed_when: true
+ 
+  

@@ -1,0 +1,18 @@
+---  # -*- mode: yaml; coding: utf-8 -*-
+
+- name: SysPass API Playbook
+  gather_facts: false
+  hosts: localhost
+
+  vars:
+    psswd_tokenPass: ''
+    account_tokenPass: ''
+    acc_name: "Company_server_app1_mylogin"
+    login: "mylogin"
+    category: "Category"
+    customer: "Compagny"
+    url: 'http://www.test.com'
+    notes: 'test note'
+  
+  roles:
+  - getpass
