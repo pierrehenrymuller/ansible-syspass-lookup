@@ -161,6 +161,7 @@ def _parse_parameters(term):
         raise AnsibleError('Unrecognized parameter(s) given to password lookup: %s' % ', '.join(invalid_params))
 
     # Set defaults
+    params['chars'] = str(params.get('chars', 'default').encode('utf-8'))
     params['psswd_length'] = int(params.get('psswd_length', DEFAULT_LENGTH))
     params['account_tokenPass'] = str(params.get('account_tokenPass', ERR_NEEDED).encode('utf-8'))
     params['psswd_tokenPass'] = str(params.get('psswd_tokenPass', ERR_NEEDED).encode('utf-8'))
@@ -187,8 +188,6 @@ def _parse_parameters(term):
         raise AnsibleError('Missing needed parameter(s) for minimal syspass lookup usage: %s' % ', '.join({key: param for key, param in params.iteritems() if param == ERR_NEEDED}.keys()))
         
                          
-    
-    params['chars'] = params.get('chars', None)
     if params['chars'] != "default":
         tmp_chars = []
         if u',,' in params['chars']:
