@@ -137,7 +137,8 @@ VALID_PARAMS = frozenset(('psswd_length',
                           'customer',
                           'url',
                           'notes',
-                          'expirationDate'))
+                          'expirationDate',
+                          'state'))
 
 #Value of needed fields if missing
 ERR_NEEDED = 'ERR_NEEDED' 
@@ -169,6 +170,7 @@ def _parse_parameters(term):
     params['customer'] = str(params.get('customer', ERR_NEEDED).encode('utf-8'))
     params['url'] = str(params.get('url', '').encode('utf-8'))
     params['notes'] = str(params.get('notes', '').encode('utf-8'))
+    params['state'] = str(params.get('state', '').encode('utf-8'))
     params['expirationDate'] = str(params.get('expirationDate', None)).encode('utf-8')\
                                if params.get('expirationDate', None) else None  
     
@@ -320,15 +322,16 @@ class SyspassClient:
         return req.json()['result']
 
 
-    def AccountDelete(self, uId):
+    def AccountDelete(self, uId, tokenPass):
         """
-        Deletes syspass account.
+        Delete syspass account.
         """
         data = {"jsonrpc": "2.0",
                 "method": "account/delete",
 		"params":{
 	            "authToken": self.API_KEY,
-                    "id": uId
+                    "id": uId,
+                    "tokenPass": tokenPass                    
                 },
                 "id": self.rId
         }
@@ -587,8 +590,13 @@ class LookupModule(LookupBase):
 
                 
             if exists: # Views password
-                psswd = sysClient.AccountViewpass(tokenPass = params["psswd_tokenPass"],
-                                                  uId = account["id"])
+                if params['state'] == 'absent':
+                    sysClient.AccountDelete(tokenPass = params["psswd_tokenPass"],
+                                            uId = account["id"])
+                    psswd = 'Deleted Account'
+                else:
+                    psswd = sysClient.AccountViewpass(tokenPass = params["psswd_tokenPass"],
+                                                      uId = account["id"])
             elif not exists:
                 # Password generation
                 chars = _gen_candidate_chars(params['chars'])
@@ -615,8 +623,8 @@ class LookupModule(LookupBase):
                                         login = params['login'],
                                         url = params['url'],
                                         notes = params['notes'],
-                                        private = True,
-                                        privateGroup = True,
+                                        private = False,
+                                        privateGroup = False,
                                         expireDate = params["expirationDate"],
                                         parentId = None)
 
