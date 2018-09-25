@@ -12,35 +12,33 @@ DOCUMENTATION = """
       DISCLAIMER: This module has been heavily inspired by https://github.com/ansible/ansible/blob/devel/lib/ansible/plugins/lookup/password.py for password generation and term handling and thus is under GPL.
 
       lookup: syspass
-        author: Gousseaud Gaëtan <gousseaud.gaetan.pro@gmail.com>
+        author: Gousseaud Gaëtan <gousseaud.gaetan.pro@gmail.com>, Pierre-Henry Muller <pierre-henry.muller@digdeo.fr>
         short_description: get syspass user password and syspass API client
         description:
             - This lookup returns the contents from Syspass database, a user's password more specificly. Other functions are also implemented for further use.
-        ansible_version: ansible 2.6.2
+        ansible_version: ansible 2.6.2 with mitogen
         python_version: 2.7.9
         syspass_version: 3.0 Beta (300.18082701)
         params:
-           terms: Parameters passed to the lookup plugin
-             -pass_length: generated password length (Optional)
-             -chars: type of chars used in generated (Optional)
-             -psswd_tokenPass: tokenPass field for account/viewPass
-             -account_tokenPass: tokenPass field for account/create
-             -name: name searched for existing or to be created account
+           -term: the account name (required and must be unique)
              -login: login given to created account
              -category: category given to created account
              -customer: client given to created account
+             -state: like in Ansible absent to remove the password, present in default to create (Optional)
+             -pass_length: generated password length (Optional)
+             -chars: type of chars used in generated (Optional)
              -url: url given to created account (Optional)
              -notes: notes given to created account (Optional)
-             -expirationDate: expiration date given to created account (Optional)
+             -private: is this password private for users who have access or public for all users in acl (default false)
+             -privategroup: is private only for users in same group (default false)
+             -expirationDate: expiration date given to created account (Optional) and not tested (no entry in webui)
 
         notes:
-          - Current state is only debug and has no return value (new or existing account)
+          - debug is only debug and has no return value (new or existing account)
           - Account is only created if exact name has no match.
           - A different field passed to an already existing account wont modify it.
           - Utility of tokenPass: https://github.com/nuxsmin/sysPass/issues/994#issuecomment-409050974
           - Rudimentary list of API accesses (Deprecated): https://github.com/nuxsmin/sysPass/blob/d0056d74a8a2845fb3841b02f4af5eac3e4975ed/lib/SP/Services/Api/ApiService.php#L175
-          - Lookup args are a string of keywords separated by a space and are parsed by parse_kv such as:
-            "{{ lookup('syspass','insidelookuptermname1=' + arg1 + ' insidelookuptermname2=' + arg2}}"
           - Usage of ansible vars: https://github.com/ansible/ansible/issues/33738#issuecomment-350819222
 
         syspass function list:
@@ -72,6 +70,7 @@ EXAMPLES = """
 
 syspass_API_URL: http://syspass-server.net/api.php
 syspass_API_KEY: 'API_KEY' #Found in Users & Accesses -> API AUTHORIZATION -> User token
+syspass_API_ACC_TOKPWD: Password for API_KEY for Account create / view / delete password account permission in API
 
 ### IN PLAYBOOK ###
 
@@ -79,30 +78,15 @@ NOTE: Default values are handled
 
 ##### USAGE 1 #####
 
-- name: Using formatted string
-  vars:
-    sysargs: >-
-      psswd_length={{ psswd_length | default(16) }}
-      psswd_tokenPass={{ psswd_tokenPass | default('ERR_NEEDED') }}
-      chars={{ chars | default('default') }}
-      account_tokenPass={{ account_tokenPass | default('ERR_NEEDED') }}
-      acc_name={{ acc_name | default('ERR_NEEDED') }}
-      login={{ login | default('ERR_NEEDED') }}
-      category={{ category | default('ERR_NEEDED') }}
-      customer={{ customer | default('ERR_NEEDED') }}
-      url={{ url | default('') }}
-      notes={{ notes | default('') }}
-                                       
-  local_action: debug msg="{{lookup('syspass',sysargs)}}"
+- name: Minimum declaration to get / create password
+  local_action: debug msg="{{ lookup('syspass', 'Server 1 test account', login=test, category='MySQL', customer='Customer 1') }}"
 
-##### USAGE 2 ######
+- name: All details for password declaration
+  local_action: debug msg="{{ lookup('syspass', 'Server 1 test account', login=test, category='MySQL', customer='Customer 1', 
+    url='https://exemp.le', notes='Additionnal infos', private=True, privategroupe=True) }}"
 
-- name: Using direct string
-    local_action: debug msg="{{ lookup('syspass','psswd_length=' + (psswd_length | default('16'))  + ' psswd_tokenPass=' + (psswd_tokenPass | default('ERR_NEEDED')) + ' chars=' + (chars | default('default')) + ' account_tokenPass=' + (account_tokenPass | default('ERR_NEEDED')) + ' acc_name=' + (acc_name | default('ERR_NEEDED')) + ' login=' + (login | default('ERR_NEEDED')) + ' category=' + (category | default('ERR_NEEDED')) + ' customer=' + (customer | default('ERR_NEEDED')) + ' url=' + (url | default('')) + ' notes=' + (notes | default('')) ) }}"
-
-### COMMAND LINE ###
-
-host@ansible-server:~/ansible_root$ ansible-playbook playbooks/syspass.yml -e "psswd_tokenPass='YOUR_VIEWPASS_PASSWORD' account_tokenPass='YOUR_ACCOUNTCREATE_PASSWORD'' acc_name='extra_vared_dynamic_len' login='dd_user_dyn' category='dd_cat_dyn' customer='dd_new_cust' url='dd_url' notes='dd_notes' chars='.,:-_@',digits,hexdigits"
+- name: Minimum declaration to delete password
+  local_action: debug msg="{{ lookup('syspass', 'Server 1 test account', state=absent) }}"
 
 
 """
@@ -115,7 +99,6 @@ import urllib3
 import re
 from ansible.errors import AnsibleError, AnsibleAssertionError
 from ansible.module_utils._text import to_native, to_text
-from ansible.parsing.splitter import parse_kv
 from ansible.plugins.lookup import LookupBase
 from ansible.utils.encrypt import do_encrypt, random_password
 
@@ -125,81 +108,10 @@ except ImportError:
     from ansible.utils.display import Display
     display = Display()
 
-
+    
+ERR_NEEDED='Empty arg needed'
+# default password length
 DEFAULT_LENGTH = 20
-VALID_PARAMS = frozenset(('psswd_length',
-                          'chars',
-                          'psswd_tokenPass',
-                          'account_tokenPass',
-                          'acc_name',
-                          'login',
-                          'category',
-                          'customer',
-                          'url',
-                          'notes',
-                          'expirationDate',
-                          'state'))
-
-#Value of needed fields if missing
-ERR_NEEDED = 'ERR_NEEDED' 
-
-def _parse_parameters(term):
-    """Hacky parsing of params
-    See https://github.com/ansible/ansible-modules-core/issues/1968#issuecomment-136842156
-    and the first_found lookup For how we want to fix this later
-    """
-    
-    params = parse_kv(term)
-
-    if '_raw_params' in params:
-        # Spaces in the path?
-        del params['_raw_params']
-    
-    # Check for invalid parameters.  Probably a user typo
-    invalid_params = frozenset(params.keys()).difference(VALID_PARAMS)
-    if invalid_params:
-        raise AnsibleError('Unrecognized parameter(s) given to password lookup: %s' % ', '.join(invalid_params))
-
-    # Set defaults
-    params['chars'] = str(params.get('chars', 'default').encode('utf-8'))
-    params['psswd_length'] = int(params.get('psswd_length', DEFAULT_LENGTH))
-    params['account_tokenPass'] = str(params.get('account_tokenPass', ERR_NEEDED).encode('utf-8'))
-    params['psswd_tokenPass'] = str(params.get('psswd_tokenPass', ERR_NEEDED).encode('utf-8'))
-    params['acc_name'] = str(params.get('acc_name', ERR_NEEDED).encode('utf-8'))
-    params['login'] = str(params.get('login', ERR_NEEDED).encode('utf-8'))
-    params['category'] = str(params.get('category', ERR_NEEDED).encode('utf-8'))
-    params['customer'] = str(params.get('customer', ERR_NEEDED).encode('utf-8'))
-    params['url'] = str(params.get('url', '').encode('utf-8'))
-    params['notes'] = str(params.get('notes', '').encode('utf-8'))
-    params['state'] = str(params.get('state', '').encode('utf-8'))
-    params['expirationDate'] = str(params.get('expirationDate', None)).encode('utf-8')\
-                               if params.get('expirationDate', None) else None  
-    
-    # Minimal use params
-    NEEDED = [params['psswd_tokenPass'],
-              params['account_tokenPass'],
-              params['acc_name'],
-              params['login'],
-              params['category'],
-              params['customer']]
-
-    # Raising error for minimal use
-    if ERR_NEEDED in set(NEEDED):
-        raise AnsibleError('Missing needed parameter(s) for minimal syspass lookup usage: %s' % ', '.join({key: param for key, param in params.iteritems() if param == ERR_NEEDED}.keys()))
-        
-                         
-    if params['chars'] != "default":
-        tmp_chars = []
-        if u',,' in params['chars']:
-            tmp_chars.append(u',')
-        tmp_chars.extend(c for c in params['chars'].replace(u',,', u',').split(u',') if c)
-        params['chars'] = tmp_chars
-    else:
-        # Default chars for password
-        params['chars'] = [u'ascii_letters', u'digits', u".,:-_"]
-
-    return params
-
 
 def _gen_candidate_chars(characters):
     '''Generate a string containing all valid chars as defined by ``characters``
@@ -228,14 +140,12 @@ def _gen_candidate_chars(characters):
 
 
 class SyspassClient:
-
-
-    def __init__(self, API_KEY, API_URL):
+    def __init__(self, API_KEY, API_URL, API_ACC_TOKPWD):
         self.API_KEY = API_KEY
         self.API_URL = API_URL
+        self.API_ACC_TOKPWD = API_ACC_TOKPWD
         self.rId = 1
 
-        
     def AccountSearch(self, text,
                            count = None,
                            categoryId = None,
@@ -257,9 +167,8 @@ class SyspassClient:
         self.rId+=1
         req = requests.post(self.API_URL, json = data)
         return req.json()['result']['result'][0]
-
     
-    def AccountViewpass(self, uId, tokenPass):
+    def AccountViewpass(self, uId):
         """
         Returns account's password. 
         uId identifies account.
@@ -270,7 +179,7 @@ class SyspassClient:
                 "params":{
                     "authToken": self.API_KEY,
                     "id": uId,
-                    "tokenPass": tokenPass
+                    "tokenPass": self.API_ACC_TOKPWD
                 },
                 "id": self.rId 
         }
@@ -278,9 +187,8 @@ class SyspassClient:
         self.rId+=1
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']['result']['password']
-
     
-    def AccountCreate(self,tokenPass,
+    def AccountCreate(self,
                       name,
                       categoryId,
                       clientId,
@@ -295,12 +203,11 @@ class SyspassClient:
         """
         Creates account for syspass.
         """
-
         data = {"jsonrpc": "2.0",
                 "method": "account/create",
                 "params":{
                     "authToken": self.API_KEY,
-                    "tokenPass": tokenPass,
+                    "tokenPass": self.API_ACC_TOKPWD,
                     "name": name,
                     "categoryId": categoryId,
                     "clientId": clientId,
@@ -320,8 +227,7 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']
 
-
-    def AccountDelete(self, uId, tokenPass):
+    def AccountDelete(self, uId):
         """
         Delete syspass account.
         """
@@ -330,7 +236,7 @@ class SyspassClient:
 		"params":{
 	            "authToken": self.API_KEY,
                     "id": uId,
-                    "tokenPass": tokenPass                    
+                    "tokenPass": self.API_ACC_TOKPWD
                 },
                 "id": self.rId
         }
@@ -338,7 +244,6 @@ class SyspassClient:
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()
-
 
     def AccountView(self, uId):
         """
@@ -357,9 +262,7 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']['result']
     
-
-    def CategorySearch(self,text,
-                          count = None):
+    def CategorySearch(self,text, count = None):
         """
         Searches syspass category.
         text is the keyword.
@@ -380,9 +283,7 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']['result'][0]
 
-
-    def CategoryCreate(self, name,
-                       description = None):
+    def CategoryCreate(self, name, description = None):
         """
         Creates syspass category.
         """
@@ -400,7 +301,6 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']
 
-
     def CategoryDelete(self, Id):
         """
         Deletes syspass category.
@@ -417,10 +317,8 @@ class SyspassClient:
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()
-
     
-    def ClientSearch(self, text,
-                        count = None):
+    def ClientSearch(self, text, count = None):
         """
         Searches syspass client.
         """
@@ -438,10 +336,7 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']['result'][0]
 
-
-    def ClientCreate(self, name,
-                     description = None,
-                     Global = False):
+    def ClientCreate(self, name, description = None, Global = False):
         """
         Creates a syspass client.
         """
@@ -460,7 +355,6 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']
 
-
     def ClientDelete(self, cId):
         """
         Deletes a syspass client.
@@ -478,7 +372,6 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()
 
-
     def TagCreate(self,name):
         """
         Creates a syspass tag.
@@ -495,10 +388,8 @@ class SyspassClient:
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()['result']
-
     
-    def TagSearch(self, text,
-                  count = None):
+    def TagSearch(self, text, count = None):
         """
         Searches a syspass tag using text as keyword.
         """
@@ -515,7 +406,6 @@ class SyspassClient:
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()
-
 
     def TagDelete(self,tId):
         """
@@ -534,7 +424,6 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()
 
-
     def Backup(self):
         """
         https://github.com/nuxsmin/sysPass/issues/1004#issuecomment-411487284
@@ -551,84 +440,82 @@ class SyspassClient:
         req = requests.post(self.API_URL, json = data, verify = False)
         return req.json()
 
-
 class LookupModule(LookupBase):
     """
-    Execution when called by lookup('syspass',"terms")
+    Execution of Ansible Lookup
     """
-    def run(self, terms, variables = None, **kwargs):
-
-        # disables https warnings
+    def run(self, terms, variables=None, **kwargs):
+        # disables https warnings in python2
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
+
         if variables is not None:
             self._templar.set_available_variables(variables)
         myvars = getattr(self._templar, '_available_variables', {})
-        
-        sysClient = SyspassClient(API_URL= str(myvars['syspass_API_URL']),
-                                  API_KEY = str(myvars['syspass_API_KEY']))
-        ret = []
-        for term in terms:
-            display.debug("Syspass lookup term: %s" % term)
-            params = _parse_parameters(term)
 
+        sp = SyspassClient(API_URL= str(myvars['syspass_API_URL']),
+                           API_KEY = str(myvars['syspass_API_KEY']),
+                           API_ACC_TOKPWD = str(myvars['syspass_API_ACC_TOKPWD']))
+
+        chars = kwargs.get('chars', 'default')
+        psswd_length = kwargs.get('psswd_length', DEFAULT_LENGTH)
+        login = kwargs.get('login', ERR_NEEDED)
+        category = kwargs.get('category', ERR_NEEDED)
+        customer = kwargs.get('customer', ERR_NEEDED)
+        url = kwargs.get('url', '')
+        notes = kwargs.get('notes', '')
+        state = kwargs.get('state', 'present')
+        private = kwargs.get('state', False)
+        privategroup = kwargs.get('state', False)
+        expirationDate = kwargs.get('expirationDate', '')
+
+        values = []
+
+        for term in terms:
             try:
-                # Verifies account's existence
-                account = sysClient.AccountSearch(text = params['acc_name'],
-                                                  count = 1)
-                # Makes sure it matched by name and not any other fields
-                if params['acc_name'] == account['name']:
+                account = sp.AccountSearch(text = term, count = 1)
+                if term == account['name']:
                     exists = True
-                    state = "Existing account, retrieved password"
+                    debug = "Existing account, retrieved password"
                 else:
                     exists = False
-                    state = "Missing account, created account and retrieved password"
-            except IndexError: # No search match
+                    debug = "Missing account, created account and retrieved password"
+            except IndexError:
                 exists = False
-                state = "Missing account, created account and retrieved password"
-
+                debug = "Missing account, created account and retrieved password"
                 
-            if exists: # Views password
-                if params['state'] == 'absent':
-                    sysClient.AccountDelete(tokenPass = params["psswd_tokenPass"],
-                                            uId = account["id"])
+            if exists:
+                if state == 'absent':
+                    sp.AccountDelete(uId = account["id"])
                     psswd = 'Deleted Account'
                 else:
-                    psswd = sysClient.AccountViewpass(tokenPass = params["psswd_tokenPass"],
-                                                      uId = account["id"])
+                    psswd = sp.AccountViewpass(uId = account["id"])
             elif not exists:
-                # Password generation
-                chars = _gen_candidate_chars(params['chars'])
-                psswd = random_password(params['psswd_length'], chars)
+                chars = _gen_candidate_chars(chars)
+                psswd = random_password(psswd_length, chars)
 
                 # Following handlers verify existence of fields
                 # creating them in case of absence.
                 try:
-                    categoryId = sysClient.CategorySearch(text = params["category"],
-                                                          count = 1 )["id"]
+                    categoryId = sp.CategorySearch(text = category, count = 1 )["id"]
                 except IndexError:
-                    categoryId = sysClient.CategoryCreate(name = params["category"])['itemId']
+                    categoryId = sp.CategoryCreate(name = category)['itemId']
                 try:
-                    customerId = sysClient.ClientSearch(text = params["customer"])['id']
+                    customerId = sp.ClientSearch(text = customer)['id']
 
                 except IndexError:
-                    customerId = sysClient.ClientCreate(name = params["customer"])['itemId']
-                # Creates syspass account
-                sysClient.AccountCreate(tokenPass = params['account_tokenPass'],
-                                        name = params['acc_name'],
-                                        categoryId = int(categoryId),
-                                        clientId = int(customerId),
-                                        password = psswd,
-                                        login = params['login'],
-                                        url = params['url'],
-                                        notes = params['notes'],
-                                        private = False,
-                                        privateGroup = False,
-                                        expireDate = params["expirationDate"],
-                                        parentId = None)
+                    customerId = sp.ClientCreate(name = customer)['itemId']
+                sp.AccountCreate(name = term,
+                                 categoryId = int(categoryId),
+                                 clientId = int(customerId),
+                                 password = psswd,
+                                 login = login,
+                                 url = url,
+                                 notes = notes,
+                                 private = private,
+                                 privateGroup = privategroup,
+                                 expireDate = expirationDate,
+                                 parentId = None)
 
             # Note: Plugins and modules always have list as output
-            print("Syspass lookup state: " + state)
-            ret = [psswd]
-        return ret
-
+            values.append(psswd)
+        return values
