@@ -71,6 +71,7 @@ EXAMPLES = """
 syspass_API_URL: http://syspass-server.net/api.php
 syspass_API_KEY: 'API_KEY' #Found in Users & Accesses -> API AUTHORIZATION -> User token
 syspass_API_ACC_TOKPWD: Password for API_KEY for Account create / view / delete password account permission in API
+syspass_default_length: number of chars in password
 
 ### IN PLAYBOOK ###
 
@@ -107,34 +108,31 @@ try:
 except ImportError:
     from ansible.utils.display import Display
     display = Display()
-
     
 ERR_NEEDED='Empty arg needed'
-# default password length
-DEFAULT_LENGTH = 20
 
 def _gen_candidate_chars(characters):
     '''Generate a string containing all valid chars as defined by ``characters``
     :arg characters: A list of character specs. The character specs are
-        shorthand names for sets of characters like 'digits', 'ascii_letters',
-        or 'punctuation' or a string to be included verbatim.
+    shorthand names for sets of characters like 'digits', 'ascii_letters',
+    or 'punctuation' or a string to be included verbatim.
     The values of each char spec can be:
     * a name of an attribute in the 'strings' module ('digits' for example).
-      The value of the attribute will be added to the candidate chars.
+    The value of the attribute will be added to the candidate chars.
     * a string of characters. If the string isn't an attribute in 'string'
-      module, the string will be directly added to the candidate chars.
+    module, the string will be directly added to the candidate chars.
     For example::
-        characters=['digits', '?|']``
+    characters=['digits', '?|']``
     will match ``string.digits`` and add all ascii digits.  ``'?|'`` will add
     the question mark and pipe characters directly. Return will be the string::
-        u'0123456789?|'
+    u'0123456789?|'
     '''
     chars = []
     for chars_spec in characters:
         # getattr from string expands things like "ascii_letters" and "digits"
         # into a set of characters.
         chars.append(to_text(getattr(string, to_native(chars_spec), chars_spec),
-                     errors='strict'))
+                             errors='strict'))
     chars = u''.join(chars).replace(u'"', u'').replace(u"'", u'')
     return chars
 
@@ -452,11 +450,17 @@ class LookupModule(LookupBase):
             self._templar.set_available_variables(variables)
         myvars = getattr(self._templar, '_available_variables', {})
 
+        DEFAULT_LENGTH = int(myvars['syspass_default_length'])
+        
         sp = SyspassClient(API_URL= str(myvars['syspass_API_URL']),
                            API_KEY = str(myvars['syspass_API_KEY']),
                            API_ACC_TOKPWD = str(myvars['syspass_API_ACC_TOKPWD']))
 
-        chars = kwargs.get('chars', 'default')
+        chars = kwargs.get('chars', None)
+        if chars == None:
+            chars = _gen_candidate_chars([u'ascii_letters', u'digits', u'-_|./?=+()[]~*{}#'])
+        else:
+            chars = _gen_candidate_chars(chars)            
         psswd_length = kwargs.get('psswd_length', DEFAULT_LENGTH)
         login = kwargs.get('login', ERR_NEEDED)
         category = kwargs.get('category', ERR_NEEDED)
@@ -464,8 +468,8 @@ class LookupModule(LookupBase):
         url = kwargs.get('url', '')
         notes = kwargs.get('notes', '')
         state = kwargs.get('state', 'present')
-        private = kwargs.get('state', False)
-        privategroup = kwargs.get('state', False)
+        private = 1 if kwargs.get('state') == True else 0
+        privategroup = 1 if kwargs.get('state') == True else 0
         expirationDate = kwargs.get('expirationDate', '')
 
         values = []
@@ -490,8 +494,7 @@ class LookupModule(LookupBase):
                 else:
                     psswd = sp.AccountViewpass(uId = account["id"])
             elif not exists:
-                chars = _gen_candidate_chars(chars)
-                psswd = random_password(psswd_length, chars)
+                psswd = ''.join(random.choice(chars) for _ in range(psswd_length))
 
                 # Following handlers verify existence of fields
                 # creating them in case of absence.
