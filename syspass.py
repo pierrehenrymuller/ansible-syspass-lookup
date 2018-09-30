@@ -442,7 +442,7 @@ class LookupModule(LookupBase):
     """
     Execution of Ansible Lookup
     """
-    def run(self, terms, variables=None, **kwargs):
+    def run(self, term, variables=None, **kwargs):
         # disables https warnings in python2
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -462,63 +462,68 @@ class LookupModule(LookupBase):
         else:
             chars = _gen_candidate_chars(chars)            
         psswd_length = kwargs.get('psswd_length', DEFAULT_LENGTH)
-        login = kwargs.get('login', ERR_NEEDED)
-        category = kwargs.get('category', ERR_NEEDED)
-        customer = kwargs.get('customer', ERR_NEEDED)
+        login = kwargs.get('login', None)
+        if login == None:
+            raise AnsibleError('login must be defined')
+        category = kwargs.get('category', None)
+        if category == None:
+            raise AnsibleError('category must be defined')
+        customer = kwargs.get('customer', None)
+        if customer == None:
+            raise AnsibleError('customer must be defined')
         url = kwargs.get('url', '')
         notes = kwargs.get('notes', '')
         state = kwargs.get('state', 'present')
         private = 1 if kwargs.get('state') == True else 0
         privategroup = 1 if kwargs.get('state') == True else 0
         expirationDate = kwargs.get('expirationDate', '')
-
+       
         values = []
 
-        for term in terms:
-            try:
-                account = sp.AccountSearch(text = term, count = 1)
-                if term == account['name']:
-                    exists = True
-                    debug = "Existing account, retrieved password"
-                else:
-                    exists = False
-                    debug = "Missing account, created account and retrieved password"
-            except IndexError:
+        try:
+            account = sp.AccountSearch(text = term[0], count = 1)
+            if term[0] == account['name']:
+                exists = True
+                debug = "Existing account, retrieved password"
+            else:
                 exists = False
                 debug = "Missing account, created account and retrieved password"
+        except IndexError:
+            exists = False
+            debug = "Missing account, created account and retrieved password"
+            
+        if exists:
+            if state == 'absent':
+                sp.AccountDelete(uId = account["id"])
+                psswd = 'Deleted Account'
+            else:
+                psswd = sp.AccountViewpass(uId = account["id"])
+        elif not exists:
+            psswd = ''.join(random.choice(chars) for _ in range(psswd_length))
+            
+            # Following handlers verify existence of fields
+            # creating them in case of absence.
+            try:
+                categoryId = sp.CategorySearch(text = category, count = 1 )["id"]
+            except IndexError:
+                categoryId = sp.CategoryCreate(name = category)['itemId']
+            try:
+                customerId = sp.ClientSearch(text = customer)['id']
                 
-            if exists:
-                if state == 'absent':
-                    sp.AccountDelete(uId = account["id"])
-                    psswd = 'Deleted Account'
-                else:
-                    psswd = sp.AccountViewpass(uId = account["id"])
-            elif not exists:
-                psswd = ''.join(random.choice(chars) for _ in range(psswd_length))
-
-                # Following handlers verify existence of fields
-                # creating them in case of absence.
-                try:
-                    categoryId = sp.CategorySearch(text = category, count = 1 )["id"]
-                except IndexError:
-                    categoryId = sp.CategoryCreate(name = category)['itemId']
-                try:
-                    customerId = sp.ClientSearch(text = customer)['id']
-
-                except IndexError:
-                    customerId = sp.ClientCreate(name = customer)['itemId']
-                sp.AccountCreate(name = term,
-                                 categoryId = int(categoryId),
-                                 clientId = int(customerId),
-                                 password = psswd,
-                                 login = login,
-                                 url = url,
-                                 notes = notes,
-                                 private = private,
-                                 privateGroup = privategroup,
-                                 expireDate = expirationDate,
-                                 parentId = None)
-
+            except IndexError:
+                customerId = sp.ClientCreate(name = customer)['itemId']
+            sp.AccountCreate(name = term[0],
+                             categoryId = int(categoryId),
+                             clientId = int(customerId),
+                             password = psswd,
+                             login = login,
+                             url = url,
+                             notes = notes,
+                             private = private,
+                             privateGroup = privategroup,
+                             expireDate = expirationDate,
+                             parentId = None)
+                
             # Note: Plugins and modules always have list as output
-            values.append(psswd)
+        values.append(psswd)
         return values
