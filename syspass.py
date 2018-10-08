@@ -98,6 +98,7 @@ import random
 import string
 import urllib3
 import re
+import sys
 from ansible.errors import AnsibleError, AnsibleAssertionError
 from ansible.module_utils._text import to_native, to_text
 from ansible.plugins.lookup import LookupBase
@@ -109,34 +110,6 @@ except ImportError:
     from ansible.utils.display import Display
     display = Display()
     
-ERR_NEEDED='Empty arg needed'
-
-def _gen_candidate_chars(characters):
-    '''Generate a string containing all valid chars as defined by ``characters``
-    :arg characters: A list of character specs. The character specs are
-    shorthand names for sets of characters like 'digits', 'ascii_letters',
-    or 'punctuation' or a string to be included verbatim.
-    The values of each char spec can be:
-    * a name of an attribute in the 'strings' module ('digits' for example).
-    The value of the attribute will be added to the candidate chars.
-    * a string of characters. If the string isn't an attribute in 'string'
-    module, the string will be directly added to the candidate chars.
-    For example::
-    characters=['digits', '?|']``
-    will match ``string.digits`` and add all ascii digits.  ``'?|'`` will add
-    the question mark and pipe characters directly. Return will be the string::
-    u'0123456789?|'
-    '''
-    chars = []
-    for chars_spec in characters:
-        # getattr from string expands things like "ascii_letters" and "digits"
-        # into a set of characters.
-        chars.append(to_text(getattr(string, to_native(chars_spec), chars_spec),
-                             errors='strict'))
-    chars = u''.join(chars).replace(u'"', u'').replace(u"'", u'')
-    return chars
-
-
 class SyspassClient:
     def __init__(self, API_KEY, API_URL, API_ACC_TOKPWD):
         self.API_KEY = API_KEY
@@ -439,91 +412,130 @@ class SyspassClient:
         return req.json()
 
 class LookupModule(LookupBase):
-    """
-    Execution of Ansible Lookup
-    """
+    
+    def _gen_candidate_chars(self, characters):
+        '''Generate a string containing all valid chars as defined by ``characters``
+        :arg characters: A list of character specs. The character specs are
+        shorthand names for sets of characters like 'digits', 'ascii_letters',
+        or 'punctuation' or a string to be included verbatim.
+        The values of each char spec can be:
+        * a name of an attribute in the 'strings' module ('digits' for example).
+        The value of the attribute will be added to the candidate chars.
+        * a string of characters. If the string isn't an attribute in 'string'
+        module, the string will be directly added to the candidate chars.
+        For example::
+        characters=['digits', '?|']``
+        will match ``string.digits`` and add all ascii digits.  ``'?|'`` will add
+        the question mark and pipe characters directly. Return will be the string::
+        u'0123456789?|'
+        '''
+        chars = []
+        for chars_spec in characters:
+            # getattr from string expands things like "ascii_letters" and "digits"
+            # into a set of characters.
+            chars.append(to_text(getattr(string, to_native(chars_spec), chars_spec),
+                                 errors='strict'))
+        chars = u''.join(chars).replace(u'"', u'').replace(u"'", u'')
+        return chars
+
+
+    def _get_params(self, term, variables, kwargs):
+        if variables is not None:
+            self._templar.set_available_variables(variables)
+        ansivars = getattr(self._templar, '_available_variables', {})
+        
+        params = {
+            'syspass_API_URL': str(ansivars['syspass_API_URL']),
+            'syspass_API_KEY': str(ansivars['syspass_API_KEY']),
+            'syspass_API_ACC_TOKPWD': str(ansivars['syspass_API_ACC_TOKPWD']),
+            'chars': kwargs.get('chars', [u'ascii_letters', u'digits', u'-_|./?=+()[]~*{}#']),
+            'psswd_length': kwargs.get('psswd_length', int(ansivars['syspass_default_length'])),
+            'account': term[0] if len(term) == 1 else None,
+            'login': kwargs.get('login', None),
+            'category': kwargs.get('category', None),
+            'customer': kwargs.get('customer', None),
+            'url': kwargs.get('url', ''),
+            'notes': kwargs.get('notes', ''),
+            'state': kwargs.get('state', 'present'),
+            'private': 1 if kwargs.get('private') == True else 0,
+            'privategroup': 1 if kwargs.get('privategroup') == True else 0,
+            'expirationDate': kwargs.get('expirationDate', ''),
+        }
+        params['chars'] = self._gen_candidate_chars(params['chars'])
+
+        for k, v in params.items():
+            if v == None:
+                raise AnsibleError('Error : %s must be defined' % (k))
+        return params
+        
+
+    def _account_exist(self, sp, search):
+        try:
+            account = sp.AccountSearch(text = search, count = 1)
+            if search == account['name']:
+                return account
+            else:
+                return False
+        except IndexError:
+            return False
+
+
+    def _account_create(self, sp, params):
+        psswd = ''.join(random.choice(params['chars']) for _ in range(params['psswd_length']))
+        
+        # Following handlers verify existence of fields
+        # creating them in case of absence.
+        try:
+            categoryId = sp.CategorySearch(text = params['category'], count = 1 )["id"]
+        except IndexError:
+            categoryId = sp.CategoryCreate(name = params['category'])['itemId']
+            
+        try:
+            customerId = sp.ClientSearch(text = params['customer'])['id']
+        except IndexError:
+            customerId = sp.ClientCreate(name = params['customer'])['itemId']
+            
+        sp.AccountCreate(name = params['account'],
+                         categoryId = int(categoryId),
+                         clientId = int(customerId),
+                         password = psswd,
+                         login = params['login'],
+                         url = params['url'],
+                         notes = params['notes'],
+                         private = params['private'],
+                         privateGroup = params['privategroup'],
+                         expireDate = params['expirationDate'],
+                         parentId = None)
+        return psswd
+    
+    
     def run(self, term, variables=None, **kwargs):
         # disables https warnings in python2
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        if variables is not None:
-            self._templar.set_available_variables(variables)
-        myvars = getattr(self._templar, '_available_variables', {})
+        params = self._get_params(term, variables, kwargs)
 
-        DEFAULT_LENGTH = int(myvars['syspass_default_length'])
-        
-        sp = SyspassClient(API_URL= str(myvars['syspass_API_URL']),
-                           API_KEY = str(myvars['syspass_API_KEY']),
-                           API_ACC_TOKPWD = str(myvars['syspass_API_ACC_TOKPWD']))
-
-        chars = kwargs.get('chars', None)
-        if chars == None:
-            chars = _gen_candidate_chars([u'ascii_letters', u'digits', u'-_|./?=+()[]~*{}#'])
-        else:
-            chars = _gen_candidate_chars(chars)            
-        psswd_length = kwargs.get('psswd_length', DEFAULT_LENGTH)
-        login = kwargs.get('login', None)
-        if login == None:
-            raise AnsibleError('login must be defined')
-        category = kwargs.get('category', None)
-        if category == None:
-            raise AnsibleError('category must be defined')
-        customer = kwargs.get('customer', None)
-        if customer == None:
-            raise AnsibleError('customer must be defined')
-        url = kwargs.get('url', '')
-        notes = kwargs.get('notes', '')
-        state = kwargs.get('state', 'present')
-        private = 1 if kwargs.get('state') == True else 0
-        privategroup = 1 if kwargs.get('state') == True else 0
-        expirationDate = kwargs.get('expirationDate', '')
-       
+        sp = SyspassClient(API_URL= params['syspass_API_URL'],
+                           API_KEY = params['syspass_API_KEY'],
+                           API_ACC_TOKPWD = params['syspass_API_ACC_TOKPWD'])
         values = []
 
-        try:
-            account = sp.AccountSearch(text = term[0], count = 1)
-            if term[0] == account['name']:
-                exists = True
-                debug = "Existing account, retrieved password"
-            else:
-                exists = False
-                debug = "Missing account, created account and retrieved password"
-        except IndexError:
-            exists = False
-            debug = "Missing account, created account and retrieved password"
-            
-        if exists:
-            if state == 'absent':
+        account = self._account_exist(sp, params['account'])
+        if account:
+            if params['state'] == 'absent':
                 sp.AccountDelete(uId = account["id"])
                 psswd = 'Deleted Account'
             else:
                 psswd = sp.AccountViewpass(uId = account["id"])
-        elif not exists:
-            psswd = ''.join(random.choice(chars) for _ in range(psswd_length))
-            
-            # Following handlers verify existence of fields
-            # creating them in case of absence.
-            try:
-                categoryId = sp.CategorySearch(text = category, count = 1 )["id"]
-            except IndexError:
-                categoryId = sp.CategoryCreate(name = category)['itemId']
-            try:
-                customerId = sp.ClientSearch(text = customer)['id']
-                
-            except IndexError:
-                customerId = sp.ClientCreate(name = customer)['itemId']
-            sp.AccountCreate(name = term[0],
-                             categoryId = int(categoryId),
-                             clientId = int(customerId),
-                             password = psswd,
-                             login = login,
-                             url = url,
-                             notes = notes,
-                             private = private,
-                             privateGroup = privategroup,
-                             expireDate = expirationDate,
-                             parentId = None)
-                
-            # Note: Plugins and modules always have list as output
+        else:
+            psswd = self._account_create(sp, params)
+
         values.append(psswd)
         return values
+
+def main(argv=sys.argv[1:]):
+    print(LookupModule().run(argv, None)[0])
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
