@@ -34,7 +34,6 @@ DOCUMENTATION = """
              -expirationDate: expiration date given to created account (Optional) and not tested (no entry in webui)
 
         notes:
-          - debug is only debug and has no return value (new or existing account)
           - Account is only created if exact name has no match.
           - A different field passed to an already existing account wont modify it.
           - Utility of tokenPass: https://github.com/nuxsmin/sysPass/issues/994#issuecomment-409050974
@@ -61,6 +60,10 @@ DOCUMENTATION = """
               -TagCreate
               -TagSearch
               -TagDelete
+            UserGroup:
+              - UserGroupCreate
+              - UserGroupSearch
+              - UserGroupDelete
             Others:
               -Backup
 """
@@ -117,10 +120,7 @@ class SyspassClient:
         self.API_ACC_TOKPWD = API_ACC_TOKPWD
         self.rId = 1
 
-    def AccountSearch(self, text,
-                           count = None,
-                           categoryId = None,
-                           clientId = None):
+    def AccountSearch(self, text, count = None, categoryId = None, clientId = None):
         """
         Search account in syspass using text as keyword,
         can apply categoryId of clientId as a filter.
@@ -137,8 +137,12 @@ class SyspassClient:
 
         self.rId+=1
         req = requests.post(self.API_URL, json = data)
-        return req.json()['result']['result'][0]
-    
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result'][0]
+        else:
+            return None
+        
     def AccountViewpass(self, uId):
         """
         Returns account's password. 
@@ -157,7 +161,11 @@ class SyspassClient:
 
         self.rId+=1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']['result']['password']
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result']['password']
+        else:
+            raise AnsibleError('AccountViewpass Error : %s' % (req['error']))
     
     def AccountCreate(self,
                       name,
@@ -169,6 +177,7 @@ class SyspassClient:
                       notes = None,
                       private = None,
                       privateGroup = None,
+                      userGroupId = None,
                       expireDate = None,
                       parentId = None):
         """
@@ -182,6 +191,7 @@ class SyspassClient:
                     "name": name,
                     "categoryId": categoryId,
                     "clientId": clientId,
+                    "userGroupId": userGroupId,
                     "pass": password,
                     "login": login,
                     "url": url,
@@ -193,10 +203,13 @@ class SyspassClient:
 		},
 		"id": self.rId
         }
-
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']
+        req = req.json()
+        if req['result']['itemId'] > 0:
+            return req['result']
+        else:
+            raise AnsibleError('AccountCreate Error : %s' % (req['error']))
 
     def AccountDelete(self, uId):
         """
@@ -214,7 +227,11 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()
+        req = req.json()
+        if req['result']['resultCode'] == 0:
+            return req['result']
+        else:
+            raise AnsibleError('AccountDelete Error : %s' % (req['error']))
 
     def AccountView(self, uId):
         """
@@ -231,7 +248,12 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']['result']
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result']
+        else:
+            raise AnsibleError('AccountView Error : %s' % (req['error']))
+        
     
     def CategorySearch(self,text, count = None):
         """
@@ -252,8 +274,12 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']['result'][0]
-
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result'][0]
+        else:
+            return None
+        
     def CategoryCreate(self, name, description = None):
         """
         Creates syspass category.
@@ -270,7 +296,11 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']
+        req = req.json()
+        if req['result']['itemId'] > 0:
+            return req['result']
+        else:
+            raise AnsibleError('CategoryCreate Error : %s' % (req['error']))
 
     def CategoryDelete(self, Id):
         """
@@ -287,8 +317,12 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()
-    
+        req = req.json()
+        if req['result']['resultCode'] == 0:
+            return req['result']
+        else:
+            raise AnsibleError('CategoryDelete Error : %s' % (req['error']))
+        
     def ClientSearch(self, text, count = None):
         """
         Searches syspass client.
@@ -305,7 +339,11 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']['result'][0]
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result'][0]
+        else:
+            return None
 
     def ClientCreate(self, name, description = None, Global = False):
         """
@@ -324,7 +362,11 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']
+        req = req.json()
+        if req['result']['itemId'] > 0:
+            return req['result']
+        else:
+            raise AnsibleError('ClientCreate Error : %s' % (req['error']))
 
     def ClientDelete(self, cId):
         """
@@ -341,7 +383,11 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()
+        req = req.json()
+        if req['result']['resultCode'] == 0:
+            return req['result']
+        else:
+            raise AnsibleError('ClientDelete Error : %s' % (req['error']))
 
     def TagCreate(self,name):
         """
@@ -358,7 +404,11 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()['result']
+        req = req.json()
+        if req['result']['itemId'] > 0:
+            return req['result']
+        else:
+            raise AnsibleError('TagCreate Error : %s' % (req['error']))
     
     def TagSearch(self, text, count = None):
         """
@@ -376,8 +426,12 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()
-
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result'][0]
+        else:
+            return None
+        
     def TagDelete(self,tId):
         """
         Deletes syspass tag using id.
@@ -393,8 +447,77 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()
+        req = req.json()
+        if req['result']['resultCode'] == 0:
+            return req['result']
+        else:
+            raise AnsibleError('TagDelete Error : %s' % (req['error']))
 
+    def UserGroupCreate(self,name,description):
+        """
+        Creates a syspass User Group.
+        """
+        data = {"jsonrpc": "2.0",
+                "method": "userGroup/create",
+                "params":{
+                    "authToken": self.API_KEY,
+                    "name": name,
+                    "description": description
+                },
+                "id": self.rId
+        }
+
+        self.rId += 1
+        req = requests.post(self.API_URL, json = data, verify = False)
+        req = req.json()
+        if req['result']['itemId'] > 0:
+            return req['result']
+        else:
+            raise AnsibleError('UserGroupCreate Error : %s' % (req['error']))
+    
+    def UserGroupSearch(self, text, count = None):
+        """
+        Searches a syspass User Group using text as keyword.
+        """
+        data = {"jsonrpc": "2.0",
+                "method": "userGroup/search",
+                "params":{
+                    "authToken": self.API_KEY,
+                    "text": text,
+                    "count": count
+		},
+		"id": self.rId
+        }
+
+        self.rId += 1
+        req = requests.post(self.API_URL, json = data, verify = False)
+        req = req.json()
+        if req['result']['count'] > 0:
+            return req['result']['result'][0]
+        else:
+            return None
+
+    def UserGroupDelete(self,ugId):
+        """
+        Deletes syspass User Group using id.
+        """
+        data = {"jsonrpc": "2.0",
+                "method": "userGroup/delete",
+                "params":{
+                    "authToken": self.API_KEY,
+                    "id" : ugId
+                },
+                "id": self.rId
+        }
+
+        self.rId += 1
+        req = requests.post(self.API_URL, json = data, verify = False)
+        req = req.json()
+        if req['result']['resultCode'] == 0:
+            return req['result']
+        else:
+            raise AnsibleError('UserGroupDelete Error : %s' % (req['error']))
+    
     def Backup(self):
         """
         https://github.com/nuxsmin/sysPass/issues/1004#issuecomment-411487284
@@ -409,7 +532,10 @@ class SyspassClient:
 
         self.rId += 1
         req = requests.post(self.API_URL, json = data, verify = False)
-        return req.json()
+        if 'result' in req.json():        
+            return req.json()['result']
+        else:
+            raise AnsibleError('Backup Error : %s' % (req.json()['error']))            
 
 class LookupModule(LookupBase):
     
@@ -454,6 +580,7 @@ class LookupModule(LookupBase):
             'login': kwargs.get('login', None),
             'category': kwargs.get('category', None),
             'customer': kwargs.get('customer', None),
+            'customer_desc': kwargs.get('customer_desc', ''),
             'url': kwargs.get('url', ''),
             'notes': kwargs.get('notes', ''),
             'state': kwargs.get('state', 'present'),
@@ -472,32 +599,41 @@ class LookupModule(LookupBase):
     def _account_exist(self, sp, search):
         try:
             account = sp.AccountSearch(text = search, count = 1)
-            if search == account['name']:
+            if account is not None and isinstance(account, dict) and account['name'] and search == account['name']:
                 return account
             else:
-                return False
+                return None
         except IndexError:
-            return False
+            return None
 
 
     def _account_create(self, sp, params):
         psswd = ''.join(random.choice(params['chars']) for _ in range(params['psswd_length']))
-        
+
         # Following handlers verify existence of fields
         # creating them in case of absence.
-        try:
-            categoryId = sp.CategorySearch(text = params['category'], count = 1 )["id"]
-        except IndexError:
+        categoryId = sp.CategorySearch(text = params['category'], count = 1 )
+        if isinstance(categoryId, dict):
+            categoryId =  categoryId['id']
+        else:
             categoryId = sp.CategoryCreate(name = params['category'])['itemId']
             
-        try:
-            customerId = sp.ClientSearch(text = params['customer'])['id']
-        except IndexError:
+        customerId = sp.ClientSearch(text = params['customer'])
+        if isinstance(customerId, dict):
+            customerId = customerId['id']
+        else:
             customerId = sp.ClientCreate(name = params['customer'])['itemId']
-            
+
+        userGroupId = sp.UserGroupSearch(text = params['customer'], count = 1)
+        if isinstance(userGroupId, dict):
+            userGroupId = userGroupId['id']
+        else:
+            userGroupId = sp.UserGroupCreate(name = params['customer'], description = params['customer_desc'])['itemId']
+
         sp.AccountCreate(name = params['account'],
                          categoryId = int(categoryId),
                          clientId = int(customerId),
+                         userGroupId = int(userGroupId),
                          password = psswd,
                          login = params['login'],
                          url = params['url'],
@@ -521,12 +657,13 @@ class LookupModule(LookupBase):
         values = []
 
         account = self._account_exist(sp, params['account'])
-        if account:
+
+        if account is not None and isinstance(account, dict) and account['id']:
             if params['state'] == 'absent':
-                sp.AccountDelete(uId = account["id"])
+                ret = sp.AccountDelete(uId = account['id'])
                 psswd = 'Deleted Account'
             else:
-                psswd = sp.AccountViewpass(uId = account["id"])
+                psswd = sp.AccountViewpass(uId = account['id'])
         else:
             psswd = self._account_create(sp, params)
 
