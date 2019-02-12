@@ -1,0 +1,84 @@
+--- # -*- mode: yaml; coding: utf-8 -*-
+
+- hosts: hostname
+  vars:
+    syspass_API_URL: 'https://SYSPASSURL/api.php'
+    syspass_API_KEY: 'XXX'
+    syspass_API_ACC_TOKPWD: 'XXX'
+    syspass_default_length: 40
+
+  tasks:
+    - name: SysPass | Minimal test | get and if not exist insert
+      debug:
+        msg: "{{ lookup('syspass', 'Account Name minimal', login='mylogin', category='MySQL', customer='TEST') }}"
+      changed_when: true
+      register: pass
+
+    - name: SysPass | Minimal test | get and compare
+      debug:
+        msg: "{{ lookup('syspass', 'Account Name minimal', login='mylogin', category='MySQL', customer='TEST') }}"
+      register: pass2
+      changed_when: pass.msg == pass2.msg
+      failed_when: pass.msg != pass2.msg
+
+    - name: SysPass | Minimal test | delete account
+      debug:
+        msg: "{{ lookup('syspass', 'Account Name minimal', login='mylogin', category='MySQL', customer='TEST', state='absent' ) }}"
+      changed_when: true
+      when: dont_delete is undefined
+      
+    - name: SysPass | Complete test | get and if not exist insert
+      debug:
+        msg: "{{ lookup('syspass', 'Account Name complete', 
+        login='mylogin', 
+        category='MySQL', 
+        customer='TEST',
+        customer_desc='Test is a good customer',
+        tags=['Prod', 'MySQL'],
+        url='mysite.com',
+        notes='ToTP required for this account',
+        chars=['ascii_letters', 'digits'],
+        psswd_length=20,
+        private=False,
+        state='present',
+        ) }}"
+      changed_when: true
+      register: pass
+
+    - name: SysPass | Complete test | get and compare
+      debug:
+        msg: "{{ lookup('syspass', 'Account Name complete', 
+        login='mylogin', 
+        category='MySQL', 
+        customer='TEST',
+        customer_desc='Test is a good customer',
+        tags=['Prod', 'MySQL'],
+        url='mysite.com',
+        notes='ToTP required for this account',
+        chars=['ascii_letters', 'digits'],
+        psswd_length='20',
+        private=False,
+        state='present',
+        ) }}"
+      register: pass2
+      changed_when: pass.msg == pass2.msg
+      failed_when: pass.msg != pass2.msg
+
+    - name: SysPass | Complete test | delete account
+      debug:
+        msg: "{{ lookup('syspass', 'Account Name complete', 
+        login='mylogin', 
+        category='MySQL', 
+        customer='TEST',
+        customer_desc='Test is a good customer',
+        tags=['Prod', 'MySQL'],
+        url='mysite.com',
+        notes='ToTP required for this account',
+        chars=['ascii_letters', 'digits'],
+        psswd_length='20',
+        private=False,
+        state='absent',
+        ) }}"
+      changed_when: true
+      when: dont_delete is undefined
+      
